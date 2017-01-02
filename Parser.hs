@@ -3,6 +3,7 @@
 
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuasiQuotes           #-}
@@ -46,13 +47,21 @@ import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 import           Control.Monad.State.Lazy
 
--- import           Path
--- import           Path.IO
+import           Path
+import           Path.IO
+
+import           Safe                         (readMay)
 
 mapInitLast :: (a -> b) -> (a -> b) -> [a] -> [b]
 mapInitLast _ _ []     = []
 mapInitLast _ g [x]    = [g x]
 mapInitLast f g (x:xs) = f x : mapInitLast f g xs
+
+splitOnCommas :: Text -> [Text]
+splitOnCommas = T.split (== ',')
+
+treadMay :: (Read r) => Text -> Maybe r
+treadMay = T.unpack .> readMay
 
 text :: Text -> Doc
 text = PP.text . T.unpack
@@ -99,7 +108,6 @@ data QXStatus       -- FIXME
 data QXVirtual      -- FIXME
 data QXPageSubtype  -- FIXME
 data QXFunctionType -- FIXME
-data Path           -- FIXME
 data CxxType        -- FIXME
 data CxxValue       -- FIXME
 data CxxStubType    -- FIXME: normal / delete / default
@@ -107,10 +115,17 @@ data CxxStubType    -- FIXME: normal / delete / default
 data QXPosition
   = QXPosition
   { _lineno   :: Int
-  , _filepath :: Path
+  , _filepath :: Path Abs File
   , _location :: Text
   , _href     :: Text
   }
+
+data QXDecl
+  = QXDeclClass    QXClass
+  | QXDeclTypedef  QXTypedef
+  | QXDeclEnum     QXEnum
+  | QXDeclVariable QXVariable
+  | QXDeclFunction QXFunction
 
 --------------------------------------------------------------------------------
 
@@ -134,7 +149,7 @@ data QXContents
 data QXModule
   = QXModule
 
-    -- Metadata
+  -- Metadata
 
   { _name     :: Text
 
@@ -145,7 +160,7 @@ data QXModule
 
   , _groups   :: [Text]
 
-    -- Qt-related
+  -- Qt-related
 
   , _title    :: Text
   , _seen     :: Bool
@@ -157,7 +172,7 @@ data QXModule
 data QXPage
   = QXPage
 
-    -- Metadata
+  -- Metadata
 
   { _name      :: Text
 
@@ -169,7 +184,7 @@ data QXPage
 
   , _groups    :: [Text]
 
-    -- Qt-related
+  -- Qt-related
 
   , _title     :: Text
   , _fulltitle :: Text
@@ -185,7 +200,7 @@ data QXPage
 data QXGroup
   = QXGroup
 
-    -- Metadata
+  -- Metadata
 
   { _name     :: Text
 
@@ -196,7 +211,7 @@ data QXGroup
 
   , _groups   :: [Text]
 
-    -- Qt-related
+  -- Qt-related
 
   , _title    :: Text
   , _seen     :: Bool
@@ -209,22 +224,21 @@ data QXGroup
 data QXTypedef
   = QXTypedef
 
-    -- Metadata
+  -- Metadata
 
-  { _name         :: Text
-  , _fullname     :: Text
+  { _name     :: Text
+  , _fullname :: Text
 
-  , _position     :: QXPosition
+  , _position :: QXPosition
 
-  , _status       :: QXStatus
-  , _since        :: QXVersion
+  , _status   :: QXStatus
+  , _since    :: QXVersion
 
-    -- C++-related
+  -- C++-related
 
-  , _access       :: QXAccessLevel
-  , _threadsafety :: QXThreadSafety
-  , _enum         :: Text
-  , _values       :: Map Text CxxValue
+  , _access   :: QXAccessLevel
+  , _tsafety  :: QXThreadSafety
+  , _enum     :: Text
   }
 
 --------------------------------------------------------------------------------
@@ -232,23 +246,22 @@ data QXTypedef
 data QXEnum
   = QXEnum
 
-    -- Metadata
+  -- Metadata
 
-  { _name         :: Text
-  , _fullname     :: Text
+  { _name     :: Text
+  , _fullname :: Text
 
-  , _position     :: QXPosition
+  , _position :: QXPosition
 
-  , _status       :: QXStatus
-  , _since        :: QXVersion
-  , _keywords     :: [QXKeyword]
+  , _status   :: QXStatus
+  , _since    :: QXVersion
 
-    -- C++-related
+  -- C++-related
 
-  , _access       :: QXAccessLevel
-  , _threadsafety :: QXThreadSafety
-  , _typedef      :: Text
-  , _values       :: Map Text CxxValue
+  , _access   :: QXAccessLevel
+  , _tsafety  :: QXThreadSafety
+  , _typedef  :: Text
+  , _values   :: Map Text CxxValue
   }
 
 --------------------------------------------------------------------------------
@@ -256,22 +269,22 @@ data QXEnum
 data QXVariable
   = QXVariable
 
-    -- Metadata
+  -- Metadata
 
-  { _name         :: Text
-  , _fullname     :: Text
+  { _name     :: Text
+  , _fullname :: Text
 
-  , _position     :: QXPosition
+  , _position :: QXPosition
 
-  , _brief        :: Text
-  , _status       :: QXStatus
+  , _brief    :: Text
+  , _status   :: QXStatus
 
-    -- C++-related
+  -- C++-related
 
-  , _access       :: QXAccessLevel
-  , _threadsafety :: QXThreadSafety
-  , _static       :: Bool
-  , _type         :: CxxType
+  , _access   :: QXAccessLevel
+  , _tsafety  :: QXThreadSafety
+  , _static   :: Bool
+  , _type     :: CxxType
   }
 
 --------------------------------------------------------------------------------
@@ -281,27 +294,27 @@ data QXProperty
 
     -- Metadata
 
-  { _name         :: Text
-  , _fullname     :: Text
+  { _name      :: Text
+  , _fullname  :: Text
 
-  , _position     :: QXPosition
+  , _position  :: QXPosition
 
-  , _brief        :: Text
-  , _status       :: QXStatus
-  , _since        :: QXVersion
+  , _brief     :: Text
+  , _status    :: QXStatus
+  , _since     :: QXVersion
 
     -- Qt-related
 
-  , _getters      :: [Text]
-  , _setters      :: [Text]
-  , _resetters    :: [Text]
-  , _notifiers    :: [Text]
+  , _getters   :: [Text]
+  , _setters   :: [Text]
+  , _resetters :: [Text]
+  , _notifiers :: [Text]
 
     -- C++-related
 
-  , _access       :: QXAccessLevel
-  , _threadsafety :: QXThreadSafety
-  , _type         :: CxxType
+  , _access    :: QXAccessLevel
+  , _tsafety   :: QXThreadSafety
+  , _type      :: CxxType
   }
 
 --------------------------------------------------------------------------------
@@ -317,92 +330,91 @@ data QXParameter
 
 data QXFunction
   = QXFunction
-  { _children     :: ()
 
   -- Metadata
 
-  , _name         :: Text
-  , _fullname     :: Text
+  { _name      :: Text
+  , _fullname  :: Text
 
-  , _position     :: QXPosition
+  , _position  :: QXPosition
 
-  , _brief        :: Text
-  , _status       :: QXStatus
-  , _since        :: QXVersion
+  , _brief     :: Text
+  , _status    :: QXStatus
+  , _since     :: QXVersion
 
   -- Qt-related
 
-  , _assocProp    :: Text
+  , _assocProp :: Text
 
   -- C++-related
 
-  , _access       :: QXAccessLevel
-  , _threadsafety :: QXThreadSafety
+  , _access    :: QXAccessLevel
+  , _tsafety   :: QXThreadSafety
 
-  , _signature    :: CxxType
-  , _type         :: CxxType
+  , _signature :: CxxType
+  , _type      :: CxxType
 
-  , _virtual      :: QXVirtual
-  , _const        :: Bool
-  , _final        :: Bool
-  , _static       :: Bool
-  , _stubType     :: CxxStubType
-  , _overload     :: Maybe Int
-  , _meta         :: QXFunctionType
+  , _virtual   :: QXVirtual
+  , _const     :: Bool
+  , _final     :: Bool
+  , _static    :: Bool
+  , _stubType  :: CxxStubType
+  , _overload  :: Maybe Int
+  , _meta      :: QXFunctionType
 
-  , _parameters   :: [QXParameter]
+  , _params    :: [QXParameter]
   }
 
 --------------------------------------------------------------------------------
 
 data QXClass
   = QXClass
-  { _children     :: ()
 
   -- Metadata
 
-  , _name         :: Text
-  , _fullname     :: Text
+  { _name     :: Text
+  , _fullname :: Text
 
-  , _position     :: QXPosition
+  , _position :: QXPosition
 
-  , _module       :: Text
-  , _groups       :: [Text]
+  , _module   :: Text
+  , _groups   :: [Text]
 
-  , _brief        :: Text
-  , _status       :: QXStatus
-  , _since        :: QXVersion
+  , _brief    :: Text
+  , _status   :: QXStatus
+  , _since    :: QXVersion
 
   -- C++-related
 
-  , _access       :: QXAccessLevel
-  , _threadsafety :: QXThreadSafety
+  , _access   :: QXAccessLevel
+  , _tsafety  :: QXThreadSafety
 
-  , _bases        :: Text
+  , _bases    :: Text
+  , _children :: [QXDecl]
   }
 
 --------------------------------------------------------------------------------
 
 data QXNamespace
   = QXNamespace
-  { _children     :: ()
 
   -- Metadata
 
-  , _name         :: Text
-  , _fullname     :: Text
+  { _name     :: Text
+  , _fullname :: Text
 
-  , _position     :: QXPosition
+  , _position :: QXPosition
 
-  , _module       :: Text
+  , _module   :: Text
 
-  , _brief        :: Text
-  , _status       :: QXStatus
+  , _brief    :: Text
+  , _status   :: QXStatus
 
   -- C++-related
 
-  , _access       :: QXAccessLevel
-  , _threadsafety :: QXThreadSafety
+  , _access   :: QXAccessLevel
+  , _tsafety  :: QXThreadSafety
+  , _children :: [QXDecl]
   }
 
 --------------------------------------------------------------------------------
@@ -418,17 +430,176 @@ data QXIndex
 
 --------------------------------------------------------------------------------
 
+parseQXPosition :: Element -> Maybe QXPosition
+parseQXPosition el = do
+  let toPath = T.unpack .> parseAbsFile
+  _lineno   <- lookupAttrib "lineno"   el >>= treadMay
+  _filepath <- lookupAttrib "filepath" el >>= toPath
+  _location <- lookupAttrib "location" el
+  _href     <- lookupAttrib "href"     el
+  _children <- el |> elChildren |> mapM parseQXDecl
+  pure $ QXPosition {..}
 
-parseQXNamespace :: Element -> QXNamespace
-parseQXNamespace = undefined
+parseQXStatus :: Element -> Maybe QXStatus
+parseQXStatus = undefined
 
-parseQXIndex :: [Content] -> QXIndex
-parseQXIndex xml = xml
-                   |> onlyElems
-                   |> (!! 1)
-                   |> elChildren
-                   |> map parseQXNamespace
-                   |> QXIndex
+parseQXSince :: Element -> Maybe QXVersion
+parseQXSince = undefined
+
+parseQXAccessLevel :: Element -> Maybe QXAccessLevel
+parseQXAccessLevel = undefined
+
+parseQXThreadSafety :: Element -> Maybe QXThreadSafety
+parseQXThreadSafety = undefined
+
+parseQXType :: Text -> Element -> Maybe CxxType
+parseQXType = undefined
+
+parseQXStubType :: Element -> Maybe CxxStubType
+parseQXStubType = undefined
+
+parseQXOverload :: Element -> Maybe (Maybe Int)
+parseQXOverload = undefined
+
+parseQXFunctionType :: Element -> Maybe QXFunctionType
+parseQXFunctionType = undefined
+
+parseQXVirtual :: Element -> Maybe QXVirtual
+parseQXVirtual = undefined
+
+parseQXParameters :: Element -> Maybe [QXParameter]
+parseQXParameters = undefined
+  where
+    parseQXParameter :: Element -> QXParameter
+    parseQXParameter = undefined
+
+parseQXValues :: Element -> Maybe (Map Text CxxValue)
+parseQXValues = undefined
+  where
+    parseQXValue :: Element -> (Text, CxxValue)
+    parseQXValue = undefined
+
+parseQXBool :: Text -> Element -> Maybe Bool
+parseQXBool attr el = case lookupAttrib attr el
+                      of Just "true"  -> pure True
+                         Just "false" -> pure False
+                         _            -> Nothing
+
+parseQXClass :: Element -> Maybe QXClass
+parseQXClass el = do
+  _name      <- el |> lookupAttrib "name"
+  _fullname  <- el |> lookupAttrib "fullname"
+  _position  <- el |> parseQXPosition
+  _module    <- el |> lookupAttrib "module"
+  _groups    <- el |> lookupAttrib "groups" |> fmap splitOnCommas
+  _brief     <- el |> lookupAttrib "brief"
+  _status    <- el |> parseQXStatus
+  _since     <- el |> parseQXSince
+  _access    <- el |> parseQXAccessLevel
+  _tsafety   <- el |> parseQXThreadSafety
+  _bases     <- el |> lookupAttrib "bases"
+  _children  <- el |> elChildren |> mapM parseQXDecl
+  pure $ QXClass {..}
+
+parseQXTypedef :: Element -> Maybe QXTypedef
+parseQXTypedef el = do
+  _name      <- el |> lookupAttrib "name"
+  _fullname  <- el |> lookupAttrib "fullname"
+  _position  <- el |> parseQXPosition
+  _status    <- el |> parseQXStatus
+  _since     <- el |> parseQXSince
+  _access    <- el |> parseQXAccessLevel
+  _tsafety   <- el |> parseQXThreadSafety
+  _enum     <- lookupAttrib "enum" el
+  _children  <- el |> elChildren |> mapM parseQXDecl
+  pure $ QXTypedef {..}
+
+parseQXEnum :: Element -> Maybe QXEnum
+parseQXEnum el = do
+  _name      <- el |> lookupAttrib "name"
+  _fullname  <- el |> lookupAttrib "fullname"
+  _position  <- el |> parseQXPosition
+  _brief     <- el |> lookupAttrib "brief"
+  _status    <- el |> parseQXStatus
+  _since     <- el |> parseQXSince
+  _access    <- el |> parseQXAccessLevel
+  _tsafety   <- el |> parseQXThreadSafety
+  _typedef   <- el |> lookupAttrib "typedef"
+  _values    <- el |> parseQXValues
+  pure $ QXEnum {..}
+
+parseQXVariable :: Element -> Maybe QXVariable
+parseQXVariable el = do
+  _name      <- el |> lookupAttrib "name"
+  _fullname  <- el |> lookupAttrib "fullname"
+  _position  <- el |> parseQXPosition
+  _brief     <- el |> lookupAttrib "brief"
+  _status    <- el |> parseQXStatus
+  _since     <- el |> parseQXSince
+  _access    <- el |> parseQXAccessLevel
+  _tsafety   <- el |> parseQXThreadSafety
+  _type      <- el |> parseQXType "type"
+  _static    <- el |> parseQXBool "static"
+  _children  <- el |> elChildren |> mapM parseQXDecl
+  pure $ QXVariable {..}
+
+parseQXFunction :: Element -> Maybe QXFunction
+parseQXFunction el = do
+  _name      <- el |> lookupAttrib "name"
+  _fullname  <- el |> lookupAttrib "fullname"
+  _position  <- el |> parseQXPosition
+  _brief     <- el |> lookupAttrib "brief"
+  _status    <- el |> parseQXStatus
+  _since     <- el |> parseQXSince
+  _assocProp <- el |> lookupAttrib "associated-property"
+  _access    <- el |> parseQXAccessLevel
+  _tsafety   <- el |> parseQXThreadSafety
+  _signature <- el |> parseQXType "signature"
+  _type      <- el |> parseQXType "type"
+  _virtual   <- el |> parseQXVirtual
+  _const     <- el |> parseQXBool "const"
+  _final     <- el |> parseQXBool "final"
+  _static    <- el |> parseQXBool "static"
+  _stubType  <- el |> parseQXStubType
+  _overload  <- el |> parseQXOverload
+  _meta      <- el |> parseQXFunctionType
+  _params    <- el |> parseQXParameters
+  pure $ QXFunction {..}
+
+parseQXDecl :: Element -> Maybe QXDecl
+parseQXDecl el = case el |> elName |> qName
+                 of "class"    -> QXDeclClass    <$> parseQXClass    el
+                    "typedef"  -> QXDeclTypedef  <$> parseQXTypedef  el
+                    "enum"     -> QXDeclEnum     <$> parseQXEnum     el
+                    "variable" -> QXDeclVariable <$> parseQXVariable el
+                    "function" -> QXDeclFunction <$> parseQXFunction el
+                    owise      -> fail $ "unknown declaration: " <> owise
+
+parseQXNamespace :: Element -> Maybe QXNamespace
+parseQXNamespace el = do
+  _name      <- el |> lookupAttrib "name"
+  _fullname  <- el |> lookupAttrib "fullname"
+  _position  <- el |> parseQXPosition
+  _module    <- el |> lookupAttrib "module"
+  _brief     <- el |> lookupAttrib "brief"
+  _status    <- el |> parseQXStatus
+  _access    <- el |> parseQXAccessLevel
+  _tsafety   <- el |> parseQXThreadSafety
+  _children  <- el |> elChildren |> mapM parseQXDecl
+  pure $ QXNamespace {..}
+
+parseQXIndex :: [Content] -> Maybe QXIndex
+parseQXIndex xml = do
+  let index = xml |> onlyElems |> (!! 1)
+  _project  <- index |> lookupAttrib "project"
+  _url      <- index |> lookupAttrib "url"
+  _version  <- index |> lookupAttrib "version"
+  _title    <- index |> lookupAttrib "title"
+  _children <- index |> elChildren |> mapM parseQXNamespace
+  pure $ QXIndex {..}
+
+lookupAttrib :: Text -> Element -> Maybe Text
+lookupAttrib = undefined
 
 isSpaceCData :: Content -> Bool
 isSpaceCData (Text (CData { cdData = xs })) = all isSpace xs
