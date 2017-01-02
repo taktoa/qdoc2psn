@@ -96,21 +96,68 @@ instance Serialize Element
 instance Serialize Content
 instance Serialize PreparsedXML
 
--- data QXFunction
---   = QXFunction
---   {
---   } deriving (Eq, Show, Read, Generic)
+data QXVersion
+  = QXVersion { _components :: [Int] }
+  deriving (Eq, Show)
 
-data QXVersion      -- FIXME
-data QXThreadSafety -- FIXME
-data QXAccessLevel  -- FIXME
-data QXStatus       -- FIXME
-data QXVirtual      -- FIXME
-data QXPageSubtype  -- FIXME
-data QXFunctionType -- FIXME
-data CxxType        -- FIXME
-data CxxValue       -- FIXME
-data CxxStubType    -- FIXME: normal / delete / default
+data QXThreadSafety
+  = QXTS_NonReentrant
+  | QXTS_Reentrant
+  | QXTS_ThreadSafe
+  | QXTS_Unspecified
+  deriving (Eq, Show)
+
+data QXAccessLevel
+  = QXAL_Private
+  | QXAL_Protected
+  | QXAL_Public
+  deriving (Eq, Show)
+
+data QXStatus
+  = QXS_Obsolete
+  | QXS_Internal
+  | QXS_Active
+  | QXS_Preliminary
+  deriving (Eq, Show)
+
+data QXVirtual
+  = QXV_NonVirtual
+  | QXV_Virtual
+  | QXV_Pure
+  deriving (Eq, Show)
+
+data QXPageSubtype
+  = QXPS_Example
+  | QXPS_ExternalPage
+  | QXPS_Header
+  | QXPS_Page
+  deriving (Eq, Show)
+
+data QXFunctionType
+  = QXFT_Constructor
+  | QXFT_Destructor
+  | QXFT_CopyAssign
+  | QXFT_CopyConstructor
+  | QXFT_MacroWithoutParams
+  | QXFT_MacroWithParams
+  | QXFT_Signal
+  | QXFT_Slot
+  | QXFT_Plain
+  deriving (Eq, Show)
+
+data CxxType
+  = CxxType { _text :: Text }
+  deriving (Eq, Show)
+
+data CxxValue
+  = CxxValue { _text :: Text }
+  deriving (Eq, Show)
+
+data CxxStubType
+  = CST_Normal
+  | CST_Delete
+  | CST_Default
+  deriving (Eq, Show)
 
 data QXPosition
   = QXPosition
@@ -118,7 +165,7 @@ data QXPosition
   , _filepath :: Path Abs File
   , _location :: Text
   , _href     :: Text
-  }
+  } deriving (Eq, Show)
 
 data QXDecl
   = QXDeclClass    QXClass
@@ -126,6 +173,7 @@ data QXDecl
   | QXDeclEnum     QXEnum
   | QXDeclVariable QXVariable
   | QXDeclFunction QXFunction
+  deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -133,7 +181,7 @@ data QXKeyword
   = QXKeyword
   { _name  :: Text
   , _title :: Text
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -142,7 +190,7 @@ data QXContents
   { _name  :: Text
   , _title :: Text
   , _level :: Int
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -165,7 +213,7 @@ data QXModule
   , _title    :: Text
   , _seen     :: Bool
   , _members  :: [Text]
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -193,7 +241,7 @@ data QXPage
   , _module    :: Text
   , _subtype   :: QXPageSubtype
   , _children  :: () -- contents, keyword
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -217,7 +265,7 @@ data QXGroup
   , _seen     :: Bool
   , _members  :: [Text]
   , _children :: () -- contents, keyword
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -239,7 +287,7 @@ data QXTypedef
   , _access   :: QXAccessLevel
   , _tsafety  :: QXThreadSafety
   , _enum     :: Text
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -262,7 +310,7 @@ data QXEnum
   , _tsafety  :: QXThreadSafety
   , _typedef  :: Text
   , _values   :: Map Text CxxValue
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -285,7 +333,7 @@ data QXVariable
   , _tsafety  :: QXThreadSafety
   , _static   :: Bool
   , _type     :: CxxType
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -315,7 +363,7 @@ data QXProperty
   , _access    :: QXAccessLevel
   , _tsafety   :: QXThreadSafety
   , _type      :: CxxType
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -324,7 +372,7 @@ data QXParameter
   { _name    :: Text
   , _type    :: CxxType
   , _default :: CxxValue
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -363,7 +411,7 @@ data QXFunction
   , _meta      :: QXFunctionType
 
   , _params    :: [QXParameter]
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -391,7 +439,7 @@ data QXClass
 
   , _bases    :: Text
   , _children :: [QXDecl]
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -415,7 +463,7 @@ data QXNamespace
   , _access   :: QXAccessLevel
   , _tsafety  :: QXThreadSafety
   , _children :: [QXDecl]
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
@@ -426,7 +474,7 @@ data QXIndex
   , _version  :: Text
   , _title    :: Text
   , _children :: [QXNamespace]
-  }
+  } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 
