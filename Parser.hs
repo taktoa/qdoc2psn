@@ -37,12 +37,14 @@ import qualified Data.Serialize               as Cereal
 
 import           GHC.Generics
 
+import           Control.Applicative
 import           Control.Monad
 import           Data.Char                    (isSpace)
+import           Data.Functor
 import           Data.Maybe
 import           Data.Monoid
 
-import           Text.PrettyPrint.ANSI.Leijen hiding (text, (<$>), (<>))
+import           Text.PrettyPrint.ANSI.Leijen hiding (empty, text, (<$>), (<>))
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 import           Control.Monad.State.Lazy
@@ -51,6 +53,9 @@ import           Path
 import           Path.IO
 
 import           Safe                         (readMay)
+
+choice :: (Alternative f) => [f a] -> f a
+choice = foldr (<|>) empty
 
 mapInitLast :: (a -> b) -> (a -> b) -> [a] -> [b]
 mapInitLast _ _ []     = []
@@ -478,6 +483,15 @@ data QXIndex
 
 --------------------------------------------------------------------------------
 
+parseQXBool :: Text -> Element -> Maybe Bool
+parseQXBool attr el = do
+  bl <- lookupAttrib attr el
+  case bl of "true"  -> pure True
+             "false" -> pure False
+             owise   -> ["unknown boolean: ", owise]
+                        |> mconcat |> T.unpack |> fail
+
+
 parseQXPosition :: Element -> Maybe QXPosition
 parseQXPosition el = do
   let toPath = T.unpack .> parseAbsFile
@@ -489,31 +503,85 @@ parseQXPosition el = do
   pure $ QXPosition {..}
 
 parseQXStatus :: Element -> Maybe QXStatus
-parseQXStatus = undefined
+parseQXStatus el = do
+  status <- lookupAttrib "status" el
+  case status of "obsolete"    -> pure QXS_Obsolete
+                 "internal"    -> pure QXS_Internal
+                 "active"      -> pure QXS_Active
+                 "preliminary" -> pure QXS_Preliminary
+                 owise         -> ["unknown status: ", owise]
+                                  |> mconcat |> T.unpack |> fail
 
 parseQXSince :: Element -> Maybe QXVersion
-parseQXSince = undefined
+parseQXSince el = lookupAttrib "since" el
+                  >>= T.replace "," "."
+                  .>  T.filter (`elem` ('.' : ['0'..'9']))
+                  .>  T.split (== '.')
+                  .>  mapM treadMay
+                  .>  fmap QXVersion
 
 parseQXAccessLevel :: Element -> Maybe QXAccessLevel
-parseQXAccessLevel = undefined
+parseQXAccessLevel el = do
+  ts <- lookupAttrib "access" el
+  case ts of "private"   -> pure QXAL_Private
+             "protected" -> pure QXAL_Protected
+             "public"    -> pure QXAL_Public
+             owise       -> ["unknown access: ", owise]
+                            |> mconcat |> T.unpack |> fail
 
 parseQXThreadSafety :: Element -> Maybe QXThreadSafety
-parseQXThreadSafety = undefined
+parseQXThreadSafety el = do
+  ts <- lookupAttrib "threadsafety" el
+  case ts of "non-reentrant" -> pure QXTS_NonReentrant
+             "reentrant"     -> pure QXTS_Reentrant
+             "thread safe"   -> pure QXTS_ThreadSafe
+             "unspecified"   -> pure QXTS_Unspecified
+             owise           -> ["unknown threadsafety: ", owise]
+                                |> mconcat |> T.unpack |> fail
+
 
 parseQXType :: Text -> Element -> Maybe CxxType
-parseQXType = undefined
+parseQXType attr el = el |> lookupAttrib attr |> fmap CxxType
 
 parseQXStubType :: Element -> Maybe CxxStubType
-parseQXStubType = undefined
+parseQXStubType el = [ (do True <- parseQXBool "delete" el
+                           pure CST_Delete)
+                     , (do True <- parseQXBool "default" el
+                           pure CST_Default)
+                     , pure CST_Normal
+                     ] |> choice
 
 parseQXOverload :: Element -> Maybe (Maybe Int)
-parseQXOverload = undefined
+parseQXOverload el = do
+  ov <- parseQXBool "overload" el
+  if ov
+    then treadMay <$> lookupAttrib "overload-number" el
+    else pure Nothing
 
 parseQXFunctionType :: Element -> Maybe QXFunctionType
-parseQXFunctionType = undefined
+parseQXFunctionType el = do
+  ts <- lookupAttrib "meta" el
+  case ts of "constructor"        -> pure QXFT_Constructor
+             "destructor"         -> pure QXFT_Destructor
+             "copy-assign"        -> pure QXFT_CopyAssign
+             "copy-constructor"   -> pure QXFT_CopyConstructor
+             "macrowithoutparams" -> pure QXFT_MacroWithoutParams
+             "macrowithparams"    -> pure QXFT_MacroWithParams
+             "signal"             -> pure QXFT_Signal
+             "slot"               -> pure QXFT_Slot
+             "plain"              -> pure QXFT_Plain
+             owise                -> ["unknown function type: ", owise]
+                                     |> mconcat |> T.unpack |> fail
+
 
 parseQXVirtual :: Element -> Maybe QXVirtual
-parseQXVirtual = undefined
+parseQXVirtual el = do
+  ts <- lookupAttrib "virtual" el
+  case ts of "non"     -> pure QXV_NonVirtual
+             "virtual" -> pure QXV_Virtual
+             "pure"    -> pure QXV_Pure
+             owise     -> ["unknown virtual: ", owise]
+                          |> mconcat |> T.unpack |> fail
 
 parseQXParameters :: Element -> Maybe [QXParameter]
 parseQXParameters = undefined
@@ -526,12 +594,6 @@ parseQXValues = undefined
   where
     parseQXValue :: Element -> (Text, CxxValue)
     parseQXValue = undefined
-
-parseQXBool :: Text -> Element -> Maybe Bool
-parseQXBool attr el = case lookupAttrib attr el
-                      of Just "true"  -> pure True
-                         Just "false" -> pure False
-                         _            -> Nothing
 
 parseQXClass :: Element -> Maybe QXClass
 parseQXClass el = do
@@ -741,7 +803,7 @@ instance Pretty XTree where
     = case children
       of [] -> tagD <+> attrsD <> semi
          _  -> [ tagD <+> attrsD <+> lbrace
-               , hang 4 (flatAlt (text "    ") empty <> vsep childrenD)
+               , hang 4 (flatAlt (text "    ") PP.empty <> vsep childrenD)
                , rbrace
                ] |> sep
     where
