@@ -72,6 +72,11 @@ import           GHC.Stack
 import qualified Data.Aeson                   as Aeson
 import qualified Data.Aeson.Encode.Pretty     as Aeson
 
+import qualified Codec.Compression.GZip       as GZip
+import           Data.Store                   (Store)
+import qualified Data.Store                   as Store
+
+
 myError :: (HasCallStack) => String -> a
 myError = error
 
@@ -181,8 +186,8 @@ data CxxType
   = CxxType { _text :: Text }
   deriving (Eq, Show, Generic)
 
-data CxxValue
-  = CxxValue { _text :: Text }
+data CxxConstExpr
+  = CxxConstExpr { _text :: Text }
   deriving (Eq, Show, Generic)
 
 data CxxStubType
@@ -343,7 +348,7 @@ data QXEnum
   , _access   :: QXAccessLevel
   , _tsafety  :: QXThreadSafety
   , _typedef  :: Text
-  , _values   :: Map Text CxxValue
+  , _values   :: Map Text CxxConstExpr
   } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
@@ -405,7 +410,7 @@ data QXParameter
   = QXParameter
   { _name    :: Text
   , _type    :: CxxType
-  , _default :: CxxValue
+  , _default :: CxxConstExpr
   } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
@@ -512,10 +517,19 @@ data QXIndex
 
 --------------------------------------------------------------------------------
 
-instance Aeson.ToJSON ByteString where
-  toJSON = T.decodeUtf8 .> Aeson.toJSON
+instance Aeson.ToJSON QXPosition where
+  toJSON (QXPosition {..}) = Aeson.object
+                             [ "_lineno"   ~> _lineno
+                             , "_filepath" ~> fpToJSON _filepath
+                             , "_location" ~> _location
+                             , "_href"     ~> _href
+                             ]
+    where
+      fpToJSON = fmap T.decodeUtf8
+      (~>) :: (Aeson.ToJSON v, Aeson.KeyValue kv) => Text -> v -> kv
+      (~>) = (Aeson..=)
 
-instance Aeson.ToJSON CxxValue
+instance Aeson.ToJSON CxxConstExpr
 instance Aeson.ToJSON CxxType
 instance Aeson.ToJSON CxxStubType
 instance Aeson.ToJSON QXVersion
@@ -525,7 +539,6 @@ instance Aeson.ToJSON QXStatus
 instance Aeson.ToJSON QXVirtual
 instance Aeson.ToJSON QXPageSubtype
 instance Aeson.ToJSON QXFunctionType
-instance Aeson.ToJSON QXPosition
 instance Aeson.ToJSON QXDecl
 instance Aeson.ToJSON QXKeyword
 instance Aeson.ToJSON QXContents
@@ -541,6 +554,33 @@ instance Aeson.ToJSON QXFunction
 instance Aeson.ToJSON QXClass
 instance Aeson.ToJSON QXNamespace
 instance Aeson.ToJSON QXIndex
+
+instance Store CxxConstExpr
+instance Store CxxType
+instance Store CxxStubType
+instance Store QXVersion
+instance Store QXThreadSafety
+instance Store QXAccessLevel
+instance Store QXStatus
+instance Store QXVirtual
+instance Store QXPageSubtype
+instance Store QXFunctionType
+instance Store QXPosition
+instance Store QXDecl
+instance Store QXKeyword
+instance Store QXContents
+instance Store QXModule
+instance Store QXPage
+instance Store QXGroup
+instance Store QXTypedef
+instance Store QXEnum
+instance Store QXVariable
+instance Store QXProperty
+instance Store QXParameter
+instance Store QXFunction
+instance Store QXClass
+instance Store QXNamespace
+instance Store QXIndex
 
 parseQXBool :: (MonadThrow m, HasCallStack) => Text -> Element -> m Bool
 parseQXBool attr el = do
@@ -669,10 +709,11 @@ parseQXParameters el = pure mempty -- FIXME
     parseQXParameter :: Element -> QXParameter
     parseQXParameter = undefined
 
-parseQXValues :: (MonadThrow m, HasCallStack) => Element -> m (Map Text CxxValue)
+parseQXValues :: (MonadThrow m, HasCallStack)
+              => Element -> m (Map Text CxxConstExpr)
 parseQXValues el = pure mempty -- FIXME
   where
-    parseQXValue :: Element -> (Text, CxxValue)
+    parseQXValue :: Element -> (Text, CxxConstExpr)
     parseQXValue = undefined
 
 parseQXClass :: (MonadThrow m, HasCallStack) => Element -> m QXClass
@@ -978,15 +1019,25 @@ contentsToXT = concatMap helper
     helper (Text cd) = [XText $ T.pack $ cdData cd]
     helper _         = []
 
-getPreparsed :: IO [Content]
-getPreparsed = do
+getPreparsedQX :: IO QXIndex
+getPreparsedQX = LBS.readFile "./debug.qx.gz"
+                 >>= GZip.decompress .> LBS.toStrict .> Store.decodeIO
+
+getPreparsedXML :: IO [Content]
+getPreparsedXML = do
   Right pp <- Cereal.decode <$> BS.readFile "./debug.dat"
   pure $ toXMLChunks pp
 
 preparseXML :: FilePath -> FilePath -> IO ()
 preparseXML input output = do
   xml <- parseXML <$> T.readFile input
-  BS.writeFile output $ Cereal.encode xml
+  xml |> Cereal.encode |> BS.writeFile output
+
+preparseQX :: FilePath -> FilePath -> IO ()
+preparseQX input output = do
+  xml <- parseXML <$> T.readFile input
+  qx <- parseQXIndex xml
+  qx |> Store.encode |> LBS.fromStrict |> GZip.compress |> LBS.writeFile output
 
 simple :: IO Element
 simple = (!! 1) . onlyElems . parseXML
@@ -998,8 +1049,7 @@ debug = T.readFile "./simple.xml" >>= parseXML .> parseQXIndex >>= print
 -- printSimple = simple >>= pretty .> putDoc
 
 main :: IO ()
-main = getPreparsed
-       >>= print
+main = getPreparsedQX >>= print
 
 -- -- import           System.Console.Docopt
 
