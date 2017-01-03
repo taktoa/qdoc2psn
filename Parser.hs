@@ -16,13 +16,21 @@ module Main where
 
 import           System.Environment           (getArgs)
 
+import           Data.ByteString              (ByteString)
 import           Data.Text                    (Text)
+
+import qualified Data.ByteString              as BS
+
+import qualified Data.ByteString.Lazy         as LBS
+
 import qualified Data.Text                    as T
 import qualified Data.Text.Encoding           as T
 import qualified Data.Text.IO                 as T
 
-import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as BS
+import qualified Data.Text.Lazy               as LT
+import qualified Data.Text.Lazy.Builder       as LT
+import qualified Data.Text.Lazy.Encoding      as LT
+import qualified Data.Text.Lazy.IO            as LT
 
 import           Data.Map                     (Map)
 import qualified Data.Map                     as Map
@@ -60,6 +68,9 @@ import           Safe                         (readMay)
 import           Control.Monad.Catch
 
 import           GHC.Stack
+
+import qualified Data.Aeson                   as Aeson
+import qualified Data.Aeson.Encode.Pretty     as Aeson
 
 myError :: (HasCallStack) => String -> a
 myError = error
@@ -119,40 +130,40 @@ instance Serialize PreparsedXML
 
 data QXVersion
   = QXVersion { _components :: [Int] }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data QXThreadSafety
   = QXTS_NonReentrant
   | QXTS_Reentrant
   | QXTS_ThreadSafe
   | QXTS_Unspecified
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data QXAccessLevel
   = QXAL_Private
   | QXAL_Protected
   | QXAL_Public
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data QXStatus
   = QXS_Obsolete
   | QXS_Internal
   | QXS_Active
   | QXS_Preliminary
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data QXVirtual
   = QXV_NonVirtual
   | QXV_Virtual
   | QXV_Pure
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data QXPageSubtype
   = QXPS_Example
   | QXPS_ExternalPage
   | QXPS_Header
   | QXPS_Page
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data QXFunctionType
   = QXFT_Constructor
@@ -164,21 +175,21 @@ data QXFunctionType
   | QXFT_Signal
   | QXFT_Slot
   | QXFT_Plain
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data CxxType
   = CxxType { _text :: Text }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data CxxValue
   = CxxValue { _text :: Text }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data CxxStubType
   = CST_Normal
   | CST_Delete
   | CST_Default
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 data QXPosition
   = QXPosition
@@ -186,7 +197,7 @@ data QXPosition
   , _filepath :: Maybe ByteString
   , _location :: Maybe Text
   , _href     :: Maybe Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 data QXDecl
   = QXDeclNamespace QXNamespace
@@ -196,7 +207,7 @@ data QXDecl
   | QXDeclVariable  QXVariable
   | QXDeclProperty  QXProperty
   | QXDeclFunction  QXFunction
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -204,7 +215,7 @@ data QXKeyword
   = QXKeyword
   { _name  :: Text
   , _title :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -213,7 +224,7 @@ data QXContents
   { _name  :: Text
   , _title :: Text
   , _level :: Int
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -236,7 +247,7 @@ data QXModule
   , _title    :: Text
   , _seen     :: Bool
   , _members  :: [Text]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -264,7 +275,7 @@ data QXPage
   , _module    :: Text
   , _subtype   :: QXPageSubtype
   , _children  :: () -- contents, keyword
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -288,7 +299,7 @@ data QXGroup
   , _seen     :: Bool
   , _members  :: [Text]
   , _children :: () -- contents, keyword
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -310,7 +321,7 @@ data QXTypedef
   , _access   :: QXAccessLevel
   , _tsafety  :: QXThreadSafety
   , _enum     :: Text
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -333,7 +344,7 @@ data QXEnum
   , _tsafety  :: QXThreadSafety
   , _typedef  :: Text
   , _values   :: Map Text CxxValue
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -356,7 +367,7 @@ data QXVariable
   , _tsafety  :: QXThreadSafety
   , _static   :: Bool
   , _type     :: CxxType
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -386,7 +397,7 @@ data QXProperty
   , _access    :: QXAccessLevel
   , _tsafety   :: QXThreadSafety
   , _type      :: CxxType
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -395,7 +406,7 @@ data QXParameter
   { _name    :: Text
   , _type    :: CxxType
   , _default :: CxxValue
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -434,7 +445,7 @@ data QXFunction
   , _meta      :: QXFunctionType
 
   , _params    :: [QXParameter]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -462,7 +473,7 @@ data QXClass
 
   , _bases    :: Text
   , _children :: [QXDecl]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -486,7 +497,7 @@ data QXNamespace
   , _access   :: QXAccessLevel
   , _tsafety  :: QXThreadSafety
   , _children :: [QXDecl]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -497,9 +508,39 @@ data QXIndex
   , _version  :: Text
   , _title    :: Text
   , _children :: [QXDecl]
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
+
+instance Aeson.ToJSON ByteString where
+  toJSON = T.decodeUtf8 .> Aeson.toJSON
+
+instance Aeson.ToJSON CxxValue
+instance Aeson.ToJSON CxxType
+instance Aeson.ToJSON CxxStubType
+instance Aeson.ToJSON QXVersion
+instance Aeson.ToJSON QXThreadSafety
+instance Aeson.ToJSON QXAccessLevel
+instance Aeson.ToJSON QXStatus
+instance Aeson.ToJSON QXVirtual
+instance Aeson.ToJSON QXPageSubtype
+instance Aeson.ToJSON QXFunctionType
+instance Aeson.ToJSON QXPosition
+instance Aeson.ToJSON QXDecl
+instance Aeson.ToJSON QXKeyword
+instance Aeson.ToJSON QXContents
+instance Aeson.ToJSON QXModule
+instance Aeson.ToJSON QXPage
+instance Aeson.ToJSON QXGroup
+instance Aeson.ToJSON QXTypedef
+instance Aeson.ToJSON QXEnum
+instance Aeson.ToJSON QXVariable
+instance Aeson.ToJSON QXProperty
+instance Aeson.ToJSON QXParameter
+instance Aeson.ToJSON QXFunction
+instance Aeson.ToJSON QXClass
+instance Aeson.ToJSON QXNamespace
+instance Aeson.ToJSON QXIndex
 
 parseQXBool :: (MonadThrow m, HasCallStack) => Text -> Element -> m Bool
 parseQXBool attr el = do
