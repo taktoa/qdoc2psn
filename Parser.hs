@@ -3,6 +3,7 @@
 
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE OverloadedStrings     #-}
@@ -54,6 +55,13 @@ import           Path.IO
 
 import           Safe                         (readMay)
 
+import           Control.Monad.Catch
+
+import           GHC.Stack
+
+myError :: (HasCallStack) => String -> a
+myError = error
+
 choice :: (Alternative f) => [f a] -> f a
 choice = foldr (<|>) empty
 
@@ -65,8 +73,14 @@ mapInitLast f g (x:xs) = f x : mapInitLast f g xs
 splitOnCommas :: Text -> [Text]
 splitOnCommas = T.split (== ',')
 
-treadMay :: (Read r) => Text -> Maybe r
-treadMay = T.unpack .> readMay
+treadM :: (MonadThrow m, Read r) => Text -> m r
+treadM txt = case (txt |> T.unpack |> readMay)
+             of Just r  -> pure r
+                Nothing -> ["failed to read: ", txt]
+                           |> mconcat |> T.unpack |> myError
+
+tshow :: (Show s) => s -> Text
+tshow = show .> T.pack
 
 text :: Text -> Doc
 text = PP.text . T.unpack
@@ -166,10 +180,10 @@ data CxxStubType
 
 data QXPosition
   = QXPosition
-  { _lineno   :: Int
-  , _filepath :: Path Abs File
-  , _location :: Text
-  , _href     :: Text
+  { _lineno   :: Maybe Int
+  , _filepath :: Maybe (Path Abs File)
+  , _location :: Maybe Text
+  , _href     :: Maybe Text
   } deriving (Eq, Show)
 
 data QXDecl
@@ -280,7 +294,7 @@ data QXTypedef
   -- Metadata
 
   { _name     :: Text
-  , _fullname :: Text
+  , _fullname :: Maybe Text
 
   , _position :: QXPosition
 
@@ -302,7 +316,7 @@ data QXEnum
   -- Metadata
 
   { _name     :: Text
-  , _fullname :: Text
+  , _fullname :: Maybe Text
 
   , _position :: QXPosition
 
@@ -325,7 +339,7 @@ data QXVariable
   -- Metadata
 
   { _name     :: Text
-  , _fullname :: Text
+  , _fullname :: Maybe Text
 
   , _position :: QXPosition
 
@@ -348,7 +362,7 @@ data QXProperty
     -- Metadata
 
   { _name      :: Text
-  , _fullname  :: Text
+  , _fullname  :: Maybe Text
 
   , _position  :: QXPosition
 
@@ -387,7 +401,7 @@ data QXFunction
   -- Metadata
 
   { _name      :: Text
-  , _fullname  :: Text
+  , _fullname  :: Maybe Text
 
   , _position  :: QXPosition
 
@@ -426,11 +440,11 @@ data QXClass
   -- Metadata
 
   { _name     :: Text
-  , _fullname :: Text
+  , _fullname :: Maybe Text
 
   , _position :: QXPosition
 
-  , _module   :: Text
+  , _module   :: Maybe Text
   , _groups   :: [Text]
 
   , _brief    :: Text
@@ -454,11 +468,11 @@ data QXNamespace
   -- Metadata
 
   { _name     :: Text
-  , _fullname :: Text
+  , _fullname :: Maybe Text
 
   , _position :: QXPosition
 
-  , _module   :: Text
+  , _module   :: Maybe Text
 
   , _brief    :: Text
   , _status   :: QXStatus
@@ -483,26 +497,25 @@ data QXIndex
 
 --------------------------------------------------------------------------------
 
-parseQXBool :: Text -> Element -> Maybe Bool
+parseQXBool :: (MonadThrow m, HasCallStack) => Text -> Element -> m Bool
 parseQXBool attr el = do
   bl <- lookupAttrib attr el
   case bl of "true"  -> pure True
              "false" -> pure False
              owise   -> ["unknown boolean: ", owise]
-                        |> mconcat |> T.unpack |> fail
+                        |> mconcat |> T.unpack |> myError
 
 
-parseQXPosition :: Element -> Maybe QXPosition
+parseQXPosition :: (MonadThrow m, HasCallStack) => Element -> m QXPosition
 parseQXPosition el = do
   let toPath = T.unpack .> parseAbsFile
-  _lineno   <- lookupAttrib "lineno"   el >>= treadMay
-  _filepath <- lookupAttrib "filepath" el >>= toPath
-  _location <- lookupAttrib "location" el
-  _href     <- lookupAttrib "href"     el
-  _children <- el |> elChildren |> mapM parseQXDecl
+  _lineno   <- lookupOptAttrib "lineno"   el >>= fmap treadM .> sequenceA
+  _filepath <- lookupOptAttrib "filepath" el >>= fmap toPath .> sequenceA
+  _location <- lookupOptAttrib "location" el
+  _href     <- lookupOptAttrib "href"     el
   pure $ QXPosition {..}
 
-parseQXStatus :: Element -> Maybe QXStatus
+parseQXStatus :: (MonadThrow m, HasCallStack) => Element -> m QXStatus
 parseQXStatus el = do
   status <- lookupAttrib "status" el
   case status of "obsolete"    -> pure QXS_Obsolete
@@ -510,26 +523,26 @@ parseQXStatus el = do
                  "active"      -> pure QXS_Active
                  "preliminary" -> pure QXS_Preliminary
                  owise         -> ["unknown status: ", owise]
-                                  |> mconcat |> T.unpack |> fail
+                                  |> mconcat |> T.unpack |> myError
 
-parseQXSince :: Element -> Maybe QXVersion
+parseQXSince :: (MonadThrow m, HasCallStack) => Element -> m QXVersion
 parseQXSince el = lookupAttrib "since" el
                   >>= T.replace "," "."
                   .>  T.filter (`elem` ('.' : ['0'..'9']))
                   .>  T.split (== '.')
-                  .>  mapM treadMay
+                  .>  mapM treadM
                   .>  fmap QXVersion
 
-parseQXAccessLevel :: Element -> Maybe QXAccessLevel
+parseQXAccessLevel :: (MonadThrow m, HasCallStack) => Element -> m QXAccessLevel
 parseQXAccessLevel el = do
   ts <- lookupAttrib "access" el
   case ts of "private"   -> pure QXAL_Private
              "protected" -> pure QXAL_Protected
              "public"    -> pure QXAL_Public
              owise       -> ["unknown access: ", owise]
-                            |> mconcat |> T.unpack |> fail
+                            |> mconcat |> T.unpack |> myError
 
-parseQXThreadSafety :: Element -> Maybe QXThreadSafety
+parseQXThreadSafety :: (MonadThrow m, HasCallStack) => Element -> m QXThreadSafety
 parseQXThreadSafety el = do
   ts <- lookupAttrib "threadsafety" el
   case ts of "non-reentrant" -> pure QXTS_NonReentrant
@@ -537,28 +550,34 @@ parseQXThreadSafety el = do
              "thread safe"   -> pure QXTS_ThreadSafe
              "unspecified"   -> pure QXTS_Unspecified
              owise           -> ["unknown threadsafety: ", owise]
-                                |> mconcat |> T.unpack |> fail
+                                |> mconcat |> T.unpack |> myError
 
 
-parseQXType :: Text -> Element -> Maybe CxxType
+parseQXType :: (MonadThrow m, HasCallStack) => Text -> Element -> m CxxType
 parseQXType attr el = el |> lookupAttrib attr |> fmap CxxType
 
-parseQXStubType :: Element -> Maybe CxxStubType
-parseQXStubType el = [ (do True <- parseQXBool "delete" el
-                           pure CST_Delete)
-                     , (do True <- parseQXBool "default" el
-                           pure CST_Default)
-                     , pure CST_Normal
-                     ] |> choice
+parseQXStubType :: (MonadThrow m, HasCallStack) => Element -> m CxxStubType
+parseQXStubType el = case success
+                     of Just s  -> pure s
+                        Nothing -> ["failed to parse stub type: ", tshow el]
+                                   |> mconcat |> T.unpack |> myError
+  where
+    success :: Maybe CxxStubType
+    success = [ (do True <- parseQXBool "delete" el
+                    pure CST_Delete)
+              , (do True <- parseQXBool "default" el
+                    pure CST_Default)
+              , pure CST_Normal
+              ] |> choice
 
-parseQXOverload :: Element -> Maybe (Maybe Int)
+parseQXOverload :: (MonadThrow m, HasCallStack) => Element -> m (Maybe Int)
 parseQXOverload el = do
   ov <- parseQXBool "overload" el
   if ov
-    then treadMay <$> lookupAttrib "overload-number" el
+    then treadM <$> lookupAttrib "overload-number" el
     else pure Nothing
 
-parseQXFunctionType :: Element -> Maybe QXFunctionType
+parseQXFunctionType :: (MonadThrow m, HasCallStack) => Element -> m QXFunctionType
 parseQXFunctionType el = do
   ts <- lookupAttrib "meta" el
   case ts of "constructor"        -> pure QXFT_Constructor
@@ -571,36 +590,36 @@ parseQXFunctionType el = do
              "slot"               -> pure QXFT_Slot
              "plain"              -> pure QXFT_Plain
              owise                -> ["unknown function type: ", owise]
-                                     |> mconcat |> T.unpack |> fail
+                                     |> mconcat |> T.unpack |> myError
 
 
-parseQXVirtual :: Element -> Maybe QXVirtual
+parseQXVirtual :: (MonadThrow m, HasCallStack) => Element -> m QXVirtual
 parseQXVirtual el = do
   ts <- lookupAttrib "virtual" el
   case ts of "non"     -> pure QXV_NonVirtual
              "virtual" -> pure QXV_Virtual
              "pure"    -> pure QXV_Pure
              owise     -> ["unknown virtual: ", owise]
-                          |> mconcat |> T.unpack |> fail
+                          |> mconcat |> T.unpack |> myError
 
-parseQXParameters :: Element -> Maybe [QXParameter]
-parseQXParameters = undefined
+parseQXParameters :: (MonadThrow m, HasCallStack) => Element -> m [QXParameter]
+parseQXParameters el = pure mempty -- FIXME
   where
     parseQXParameter :: Element -> QXParameter
     parseQXParameter = undefined
 
-parseQXValues :: Element -> Maybe (Map Text CxxValue)
-parseQXValues = undefined
+parseQXValues :: (MonadThrow m, HasCallStack) => Element -> m (Map Text CxxValue)
+parseQXValues el = pure mempty -- FIXME
   where
     parseQXValue :: Element -> (Text, CxxValue)
     parseQXValue = undefined
 
-parseQXClass :: Element -> Maybe QXClass
+parseQXClass :: (MonadThrow m, HasCallStack) => Element -> m QXClass
 parseQXClass el = do
   _name      <- el |> lookupAttrib "name"
-  _fullname  <- el |> lookupAttrib "fullname"
+  _fullname  <- el |> lookupOptAttrib "fullname"
   _position  <- el |> parseQXPosition
-  _module    <- el |> lookupAttrib "module"
+  _module    <- el |> lookupOptAttrib "module"
   _groups    <- el |> lookupAttrib "groups" |> fmap splitOnCommas
   _brief     <- el |> lookupAttrib "brief"
   _status    <- el |> parseQXStatus
@@ -611,23 +630,23 @@ parseQXClass el = do
   _children  <- el |> elChildren |> mapM parseQXDecl
   pure $ QXClass {..}
 
-parseQXTypedef :: Element -> Maybe QXTypedef
+parseQXTypedef :: (MonadThrow m, HasCallStack) => Element -> m QXTypedef
 parseQXTypedef el = do
   _name      <- el |> lookupAttrib "name"
-  _fullname  <- el |> lookupAttrib "fullname"
+  _fullname  <- el |> lookupOptAttrib "fullname"
   _position  <- el |> parseQXPosition
   _status    <- el |> parseQXStatus
   _since     <- el |> parseQXSince
   _access    <- el |> parseQXAccessLevel
   _tsafety   <- el |> parseQXThreadSafety
-  _enum     <- lookupAttrib "enum" el
+  _enum      <- lookupAttrib "enum" el
   _children  <- el |> elChildren |> mapM parseQXDecl
   pure $ QXTypedef {..}
 
-parseQXEnum :: Element -> Maybe QXEnum
+parseQXEnum :: (MonadThrow m, HasCallStack) => Element -> m QXEnum
 parseQXEnum el = do
   _name      <- el |> lookupAttrib "name"
-  _fullname  <- el |> lookupAttrib "fullname"
+  _fullname  <- el |> lookupOptAttrib "fullname"
   _position  <- el |> parseQXPosition
   _brief     <- el |> lookupAttrib "brief"
   _status    <- el |> parseQXStatus
@@ -638,10 +657,10 @@ parseQXEnum el = do
   _values    <- el |> parseQXValues
   pure $ QXEnum {..}
 
-parseQXVariable :: Element -> Maybe QXVariable
+parseQXVariable :: (MonadThrow m, HasCallStack) => Element -> m QXVariable
 parseQXVariable el = do
   _name      <- el |> lookupAttrib "name"
-  _fullname  <- el |> lookupAttrib "fullname"
+  _fullname  <- el |> lookupOptAttrib "fullname"
   _position  <- el |> parseQXPosition
   _brief     <- el |> lookupAttrib "brief"
   _status    <- el |> parseQXStatus
@@ -653,10 +672,10 @@ parseQXVariable el = do
   _children  <- el |> elChildren |> mapM parseQXDecl
   pure $ QXVariable {..}
 
-parseQXFunction :: Element -> Maybe QXFunction
+parseQXFunction :: (MonadThrow m, HasCallStack) => Element -> m QXFunction
 parseQXFunction el = do
   _name      <- el |> lookupAttrib "name"
-  _fullname  <- el |> lookupAttrib "fullname"
+  _fullname  <- el |> lookupOptAttrib "fullname"
   _position  <- el |> parseQXPosition
   _brief     <- el |> lookupAttrib "brief"
   _status    <- el |> parseQXStatus
@@ -676,21 +695,25 @@ parseQXFunction el = do
   _params    <- el |> parseQXParameters
   pure $ QXFunction {..}
 
-parseQXDecl :: Element -> Maybe QXDecl
+parseQXDecl :: (MonadThrow m, HasCallStack) => Element -> m QXDecl
 parseQXDecl el = case el |> elName |> qName
                  of "class"    -> QXDeclClass    <$> parseQXClass    el
                     "typedef"  -> QXDeclTypedef  <$> parseQXTypedef  el
                     "enum"     -> QXDeclEnum     <$> parseQXEnum     el
                     "variable" -> QXDeclVariable <$> parseQXVariable el
                     "function" -> QXDeclFunction <$> parseQXFunction el
-                    owise      -> fail $ "unknown declaration: " <> owise
+                    owise      -> myError $ "unknown declaration: " <> owise
 
-parseQXNamespace :: Element -> Maybe QXNamespace
+parseQXNamespace :: (MonadThrow m, HasCallStack) => Element -> m QXNamespace
 parseQXNamespace el = do
+  let ename = el |> elName |> qName
+  when (ename /= "namespace")
+    $ myError $ mconcat $ ["tag name is not \"namespace\": ", ename]
+
   _name      <- el |> lookupAttrib "name"
-  _fullname  <- el |> lookupAttrib "fullname"
+  _fullname  <- el |> lookupOptAttrib "fullname"
   _position  <- el |> parseQXPosition
-  _module    <- el |> lookupAttrib "module"
+  _module    <- el |> lookupOptAttrib "module"
   _brief     <- el |> lookupAttrib "brief"
   _status    <- el |> parseQXStatus
   _access    <- el |> parseQXAccessLevel
@@ -698,18 +721,51 @@ parseQXNamespace el = do
   _children  <- el |> elChildren |> mapM parseQXDecl
   pure $ QXNamespace {..}
 
-parseQXIndex :: [Content] -> Maybe QXIndex
+parseQXIndex :: (MonadThrow m, HasCallStack) => [Content] -> m QXIndex
 parseQXIndex xml = do
-  let index = xml |> onlyElems |> (!! 1)
-  _project  <- index |> lookupAttrib "project"
-  _url      <- index |> lookupAttrib "url"
-  _version  <- index |> lookupAttrib "version"
-  _title    <- index |> lookupAttrib "title"
-  _children <- index |> elChildren |> mapM parseQXNamespace
+  let el = xml |> onlyElems |> (!! 1)
+
+  let ename = el |> elName |> qName
+  when (ename /= "INDEX")
+    $ myError $ mconcat $ ["tag name is not \"INDEX\": ", ename]
+
+  _project  <- el |> lookupAttrib "project"
+  _url      <- el |> lookupAttrib "url"
+  _version  <- el |> lookupAttrib "version"
+  _title    <- el |> lookupAttrib "title"
+  _children <- el |> elChildren |> mapM parseQXNamespace
   pure $ QXIndex {..}
 
-lookupAttrib :: Text -> Element -> Maybe Text
-lookupAttrib = undefined
+lookupAttrib :: (MonadThrow m, HasCallStack) => Text -> Element -> m Text
+lookupAttrib aname (el@(Element { elAttribs })) = inspected
+  where
+    inspected = case filtered
+                of [(_, v)] -> pure (T.pack v)
+                   []       -> ["attribute not found: ", aname, " in \n\n",
+                                prettyEl el]
+                               |> mconcat |> T.unpack |> myError
+                   owise    -> ["duplicated attributes: ", tshow owise]
+                               |> mconcat |> T.unpack |> myError
+
+    filtered = elAttribs
+               |> fmap (\a -> (a |> attrKey |> qName |> T.pack, a |> attrVal))
+               |> filter (fst .> (== aname))
+
+lookupOptAttrib :: (MonadThrow m, HasCallStack) => Text -> Element -> m (Maybe Text)
+lookupOptAttrib aname (el@(Element { elAttribs })) = inspected
+  where
+    inspected = case filtered
+                of [(_, v)] -> pure (Just $ T.pack v)
+                   []       -> pure Nothing
+                   owise    -> ["duplicated attributes: ", tshow owise]
+                               |> mconcat |> T.unpack |> myError
+
+    filtered = elAttribs
+               |> fmap (\a -> (a |> attrKey |> qName |> T.pack, a |> attrVal))
+               |> filter (fst .> (== aname))
+
+prettyEl :: Element -> Text
+prettyEl = pretty .> show .> T.pack
 
 isSpaceCData :: Content -> Bool
 isSpaceCData (Text (CData { cdData = xs })) = all isSpace xs
@@ -820,6 +876,9 @@ instance Pretty XTree where
                        ] |> hsep
       padding = attrs |> Map.keys |> map T.length |> maximum
 
+instance Pretty Element where
+  pretty = elementToXT .> pretty
+
 elementToXT :: Element -> XTree
 elementToXT el = XElement elementName elementAttrs elementContent
   where
@@ -847,12 +906,14 @@ preparseXML input output = do
   xml <- parseXML <$> T.readFile input
   BS.writeFile output $ Cereal.encode xml
 
-simple :: IO XTree
-simple = elementToXT . (!! 1) . onlyElems . parseXML
+simple :: IO Element
+simple = (!! 1) . onlyElems . parseXML
          <$> T.readFile "./simple.xml"
 
-printSimple :: IO ()
-printSimple = simple >>= pretty .> putDoc
+debug :: IO ()
+debug = T.readFile "./simple.xml" >>= parseXML .> parseQXIndex >>= print
+-- printSimple :: IO ()
+-- printSimple = simple >>= pretty .> putDoc
 
 main :: IO ()
 main = getPreparsed
