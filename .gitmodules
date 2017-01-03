@@ -1,0 +1,4 @@
+[submodule "misc/qttools"]
+	branch = qdoc2psn
+	path = misc/qttools
+	url = https://github.com/taktoa/qttools.git
