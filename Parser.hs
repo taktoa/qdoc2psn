@@ -9,6 +9,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuasiQuotes           #-}
 {-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StandaloneDeriving    #-}
 
 module Main where
@@ -17,6 +18,7 @@ import           System.Environment           (getArgs)
 
 import           Data.Text                    (Text)
 import qualified Data.Text                    as T
+import qualified Data.Text.Encoding           as T
 import qualified Data.Text.IO                 as T
 
 import           Data.ByteString              (ByteString)
@@ -50,8 +52,8 @@ import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 import           Control.Monad.State.Lazy
 
-import           Path
-import           Path.IO
+import           HPath
+import           HPath.IO
 
 import           Safe                         (readMay)
 
@@ -73,7 +75,7 @@ mapInitLast f g (x:xs) = f x : mapInitLast f g xs
 splitOnCommas :: Text -> [Text]
 splitOnCommas = T.split (== ',')
 
-treadM :: (MonadThrow m, Read r) => Text -> m r
+treadM :: (MonadThrow m, Read r, HasCallStack) => Text -> m r
 treadM txt = case (txt |> T.unpack |> readMay)
              of Just r  -> pure r
                 Nothing -> ["failed to read: ", txt]
@@ -181,17 +183,19 @@ data CxxStubType
 data QXPosition
   = QXPosition
   { _lineno   :: Maybe Int
-  , _filepath :: Maybe (Path Abs File)
+  , _filepath :: Maybe ByteString
   , _location :: Maybe Text
   , _href     :: Maybe Text
   } deriving (Eq, Show)
 
 data QXDecl
-  = QXDeclClass    QXClass
-  | QXDeclTypedef  QXTypedef
-  | QXDeclEnum     QXEnum
-  | QXDeclVariable QXVariable
-  | QXDeclFunction QXFunction
+  = QXDeclNamespace QXNamespace
+  | QXDeclClass     QXClass
+  | QXDeclTypedef   QXTypedef
+  | QXDeclEnum      QXEnum
+  | QXDeclVariable  QXVariable
+  | QXDeclProperty  QXProperty
+  | QXDeclFunction  QXFunction
   deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -247,7 +251,7 @@ data QXPage
 
   , _brief     :: Text
   , _status    :: QXStatus
-  , _since     :: QXVersion
+  , _since     :: Maybe QXVersion
 
   , _groups    :: [Text]
 
@@ -299,7 +303,7 @@ data QXTypedef
   , _position :: QXPosition
 
   , _status   :: QXStatus
-  , _since    :: QXVersion
+  , _since    :: Maybe QXVersion
 
   -- C++-related
 
@@ -321,7 +325,7 @@ data QXEnum
   , _position :: QXPosition
 
   , _status   :: QXStatus
-  , _since    :: QXVersion
+  , _since    :: Maybe QXVersion
 
   -- C++-related
 
@@ -368,7 +372,7 @@ data QXProperty
 
   , _brief     :: Text
   , _status    :: QXStatus
-  , _since     :: QXVersion
+  , _since     :: Maybe QXVersion
 
     -- Qt-related
 
@@ -407,7 +411,7 @@ data QXFunction
 
   , _brief     :: Text
   , _status    :: QXStatus
-  , _since     :: QXVersion
+  , _since     :: Maybe QXVersion
 
   -- Qt-related
 
@@ -449,7 +453,7 @@ data QXClass
 
   , _brief    :: Text
   , _status   :: QXStatus
-  , _since    :: QXVersion
+  , _since    :: Maybe QXVersion
 
   -- C++-related
 
@@ -492,7 +496,7 @@ data QXIndex
   , _url      :: Text
   , _version  :: Text
   , _title    :: Text
-  , _children :: [QXNamespace]
+  , _children :: [QXDecl]
   } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -505,10 +509,9 @@ parseQXBool attr el = do
              owise   -> ["unknown boolean: ", owise]
                         |> mconcat |> T.unpack |> myError
 
-
 parseQXPosition :: (MonadThrow m, HasCallStack) => Element -> m QXPosition
 parseQXPosition el = do
-  let toPath = T.unpack .> parseAbsFile
+  let toPath = T.encodeUtf8 .> pure
   _lineno   <- lookupOptAttrib "lineno"   el >>= fmap treadM .> sequenceA
   _filepath <- lookupOptAttrib "filepath" el >>= fmap toPath .> sequenceA
   _location <- lookupOptAttrib "location" el
@@ -525,13 +528,18 @@ parseQXStatus el = do
                  owise         -> ["unknown status: ", owise]
                                   |> mconcat |> T.unpack |> myError
 
-parseQXSince :: (MonadThrow m, HasCallStack) => Element -> m QXVersion
-parseQXSince el = lookupAttrib "since" el
-                  >>= T.replace "," "."
-                  .>  T.filter (`elem` ('.' : ['0'..'9']))
-                  .>  T.split (== '.')
-                  .>  mapM treadM
-                  .>  fmap QXVersion
+parseQXSince :: (MonadThrow m, HasCallStack) => Element -> m (Maybe QXVersion)
+parseQXSince el = do
+  let allowed = Set.fromList ('.' : ['0'..'9'])
+  let isAllowed x = Set.member x allowed
+  ms <- lookupOptAttrib "since" el
+  case ms of Just s  -> s |> T.replace "," "."
+                          |> T.filter isAllowed
+                          |> T.split (== '.')
+                          |> mapM treadM
+                          |> fmap QXVersion
+                          |> pure
+             Nothing -> pure Nothing
 
 parseQXAccessLevel :: (MonadThrow m, HasCallStack) => Element -> m QXAccessLevel
 parseQXAccessLevel el = do
@@ -602,6 +610,18 @@ parseQXVirtual el = do
              owise     -> ["unknown virtual: ", owise]
                           |> mconcat |> T.unpack |> myError
 
+parseQXPropertyChildren :: (MonadThrow m, HasCallStack)
+                        => Text -> Element -> m [Text]
+parseQXPropertyChildren expected = elChildren
+                                   .> mapMaybe parseChild
+                                   .> pure
+  where
+    parseChild :: Element -> Maybe Text
+    parseChild el = do
+      let ename = el |> elName |> qName |> T.pack
+      guard $ ename == expected
+      el |> lookupAttrib "name"
+
 parseQXParameters :: (MonadThrow m, HasCallStack) => Element -> m [QXParameter]
 parseQXParameters el = pure mempty -- FIXME
   where
@@ -627,7 +647,7 @@ parseQXClass el = do
   _access    <- el |> parseQXAccessLevel
   _tsafety   <- el |> parseQXThreadSafety
   _bases     <- el |> lookupAttrib "bases"
-  _children  <- el |> elChildren |> mapM parseQXDecl
+  _children  <- el |> elChildren |> mapM parseQXDecl |> fmap catMaybes
   pure $ QXClass {..}
 
 parseQXTypedef :: (MonadThrow m, HasCallStack) => Element -> m QXTypedef
@@ -640,7 +660,6 @@ parseQXTypedef el = do
   _access    <- el |> parseQXAccessLevel
   _tsafety   <- el |> parseQXThreadSafety
   _enum      <- lookupAttrib "enum" el
-  _children  <- el |> elChildren |> mapM parseQXDecl
   pure $ QXTypedef {..}
 
 parseQXEnum :: (MonadThrow m, HasCallStack) => Element -> m QXEnum
@@ -669,8 +688,24 @@ parseQXVariable el = do
   _tsafety   <- el |> parseQXThreadSafety
   _type      <- el |> parseQXType "type"
   _static    <- el |> parseQXBool "static"
-  _children  <- el |> elChildren |> mapM parseQXDecl
   pure $ QXVariable {..}
+
+parseQXProperty :: (MonadThrow m, HasCallStack) => Element -> m QXProperty
+parseQXProperty el = do
+  _name      <- el |> lookupAttrib "name"
+  _fullname  <- el |> lookupOptAttrib "name"
+  _position  <- el |> parseQXPosition
+  _brief     <- el |> lookupAttrib "brief"
+  _status    <- el |> parseQXStatus
+  _since     <- el |> parseQXSince
+  _getters   <- el |> parseQXPropertyChildren "getter"
+  _setters   <- el |> parseQXPropertyChildren "setter"
+  _resetters <- el |> parseQXPropertyChildren "resetter"
+  _notifiers <- el |> parseQXPropertyChildren "notifier"
+  _access    <- el |> parseQXAccessLevel
+  _tsafety   <- el |> parseQXThreadSafety
+  _type      <- el |> parseQXType "type"
+  pure $ QXProperty {..}
 
 parseQXFunction :: (MonadThrow m, HasCallStack) => Element -> m QXFunction
 parseQXFunction el = do
@@ -695,15 +730,6 @@ parseQXFunction el = do
   _params    <- el |> parseQXParameters
   pure $ QXFunction {..}
 
-parseQXDecl :: (MonadThrow m, HasCallStack) => Element -> m QXDecl
-parseQXDecl el = case el |> elName |> qName
-                 of "class"    -> QXDeclClass    <$> parseQXClass    el
-                    "typedef"  -> QXDeclTypedef  <$> parseQXTypedef  el
-                    "enum"     -> QXDeclEnum     <$> parseQXEnum     el
-                    "variable" -> QXDeclVariable <$> parseQXVariable el
-                    "function" -> QXDeclFunction <$> parseQXFunction el
-                    owise      -> myError $ "unknown declaration: " <> owise
-
 parseQXNamespace :: (MonadThrow m, HasCallStack) => Element -> m QXNamespace
 parseQXNamespace el = do
   let ename = el |> elName |> qName
@@ -718,8 +744,25 @@ parseQXNamespace el = do
   _status    <- el |> parseQXStatus
   _access    <- el |> parseQXAccessLevel
   _tsafety   <- el |> parseQXThreadSafety
-  _children  <- el |> elChildren |> mapM parseQXDecl
+  _children  <- el |> elChildren |> mapM parseQXDecl |> fmap catMaybes
   pure $ QXNamespace {..}
+
+parseQXDecl :: (MonadThrow m, HasCallStack) => Element -> m (Maybe QXDecl)
+parseQXDecl el = case el |> elName |> qName of
+  "class"     -> el |> parseQXClass     |> fmap (QXDeclClass     .> Just)
+  "typedef"   -> el |> parseQXTypedef   |> fmap (QXDeclTypedef   .> Just)
+  "enum"      -> el |> parseQXEnum      |> fmap (QXDeclEnum      .> Just)
+  "variable"  -> el |> parseQXVariable  |> fmap (QXDeclVariable  .> Just)
+  "property"  -> el |> parseQXProperty  |> fmap (QXDeclProperty  .> Just)
+  "function"  -> el |> parseQXFunction  |> fmap (QXDeclFunction  .> Just)
+  "namespace" -> el |> parseQXNamespace |> fmap (QXDeclNamespace .> Just)
+  "page"      -> pure Nothing
+  "group"     -> pure Nothing
+  "module"    -> pure Nothing
+  "target"    -> pure Nothing
+  "keyword"   -> pure Nothing
+  "contents"  -> pure Nothing
+  owise       -> myError $ "unknown declaration: " <> owise
 
 parseQXIndex :: (MonadThrow m, HasCallStack) => [Content] -> m QXIndex
 parseQXIndex xml = do
@@ -733,7 +776,7 @@ parseQXIndex xml = do
   _url      <- el |> lookupAttrib "url"
   _version  <- el |> lookupAttrib "version"
   _title    <- el |> lookupAttrib "title"
-  _children <- el |> elChildren |> mapM parseQXNamespace
+  _children <- el |> elChildren |> mapM parseQXDecl |> fmap catMaybes
   pure $ QXIndex {..}
 
 lookupAttrib :: (MonadThrow m, HasCallStack) => Text -> Element -> m Text
@@ -741,9 +784,7 @@ lookupAttrib aname (el@(Element { elAttribs })) = inspected
   where
     inspected = case filtered
                 of [(_, v)] -> pure (T.pack v)
-                   []       -> ["attribute not found: ", aname, " in \n\n",
-                                prettyEl el]
-                               |> mconcat |> T.unpack |> myError
+                   []       -> pure ""
                    owise    -> ["duplicated attributes: ", tshow owise]
                                |> mconcat |> T.unpack |> myError
 
