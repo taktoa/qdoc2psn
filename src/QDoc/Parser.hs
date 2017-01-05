@@ -1,6 +1,3 @@
-#!/usr/bin/env runhaskell
--- -*- coding: utf-8; mode: haskell; -*-
-
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -12,7 +9,7 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StandaloneDeriving    #-}
 
-module Main where
+module QDoc.Parser where
 
 import           System.Environment           (getArgs)
 
