@@ -4,6 +4,7 @@
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE QuasiQuotes           #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
@@ -40,9 +41,6 @@ import           Data.Foldable                (toList)
 import           Text.XML.Light
 import           Text.XML.Light.Cursor        hiding (Path)
 
-import           Data.Serialize               (Serialize)
-import qualified Data.Serialize               as Cereal
-
 import           GHC.Generics
 
 import           Control.Applicative
@@ -72,7 +70,6 @@ import qualified Data.Aeson.Encode.Pretty     as Aeson
 import qualified Codec.Compression.GZip       as GZip
 import           Data.Store                   (Store)
 import qualified Data.Store                   as Store
-
 
 myError :: (HasCallStack) => String -> a
 myError = error
@@ -112,9 +109,6 @@ infixl 9 .>
 (<#>) = flip (<$>)
 infixr 4 <#>
 
-newtype PreparsedXML = PreparsedXML { toXMLChunks :: [Content] }
-                     deriving (Generic)
-
 deriving instance Generic Attr
 deriving instance Generic CData
 deriving instance Generic CDataKind
@@ -122,13 +116,12 @@ deriving instance Generic QName
 deriving instance Generic Element
 deriving instance Generic Content
 
-instance Serialize Attr
-instance Serialize CData
-instance Serialize CDataKind
-instance Serialize QName
-instance Serialize Element
-instance Serialize Content
-instance Serialize PreparsedXML
+instance Store Attr
+instance Store CData
+instance Store CDataKind
+instance Store QName
+instance Store Element
+instance Store Content
 
 data QXVersion
   = QXVersion { _components :: [Int] }
@@ -210,98 +203,6 @@ data QXDecl
   | QXDeclProperty  QXProperty
   | QXDeclFunction  QXFunction
   deriving (Eq, Show, Generic)
-
---------------------------------------------------------------------------------
-
-data QXKeyword
-  = QXKeyword
-  { _name  :: Text
-  , _title :: Text
-  } deriving (Eq, Show, Generic)
-
---------------------------------------------------------------------------------
-
-data QXContents
-  = QXContents
-  { _name  :: Text
-  , _title :: Text
-  , _level :: Int
-  } deriving (Eq, Show, Generic)
-
---------------------------------------------------------------------------------
-
-data QXModule
-  = QXModule
-
-  -- Metadata
-
-  { _name     :: Text
-
-  , _position :: QXPosition
-
-  , _brief    :: Text
-  , _status   :: QXStatus
-
-  , _groups   :: [Text]
-
-  -- Qt-related
-
-  , _title    :: Text
-  , _seen     :: Bool
-  , _members  :: [Text]
-  } deriving (Eq, Show, Generic)
-
---------------------------------------------------------------------------------
-
-data QXPage
-  = QXPage
-
-  -- Metadata
-
-  { _name      :: Text
-
-  , _position  :: QXPosition
-
-  , _brief     :: Text
-  , _status    :: QXStatus
-  , _since     :: Maybe QXVersion
-
-  , _groups    :: [Text]
-
-  -- Qt-related
-
-  , _title     :: Text
-  , _fulltitle :: Text
-  , _subtitle  :: Text
-
-  , _module    :: Text
-  , _subtype   :: QXPageSubtype
-  , _children  :: () -- contents, keyword
-  } deriving (Eq, Show, Generic)
-
---------------------------------------------------------------------------------
-
-data QXGroup
-  = QXGroup
-
-  -- Metadata
-
-  { _name     :: Text
-
-  , _position :: QXPosition
-
-  , _brief    :: Text
-  , _status   :: QXStatus
-
-  , _groups   :: [Text]
-
-  -- Qt-related
-
-  , _title    :: Text
-  , _seen     :: Bool
-  , _members  :: [Text]
-  , _children :: () -- contents, keyword
-  } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -537,11 +438,6 @@ instance Aeson.ToJSON QXVirtual
 instance Aeson.ToJSON QXPageSubtype
 instance Aeson.ToJSON QXFunctionType
 instance Aeson.ToJSON QXDecl
-instance Aeson.ToJSON QXKeyword
-instance Aeson.ToJSON QXContents
-instance Aeson.ToJSON QXModule
-instance Aeson.ToJSON QXPage
-instance Aeson.ToJSON QXGroup
 instance Aeson.ToJSON QXTypedef
 instance Aeson.ToJSON QXEnum
 instance Aeson.ToJSON QXVariable
@@ -564,11 +460,6 @@ instance Store QXPageSubtype
 instance Store QXFunctionType
 instance Store QXPosition
 instance Store QXDecl
-instance Store QXKeyword
-instance Store QXContents
-instance Store QXModule
-instance Store QXPage
-instance Store QXGroup
 instance Store QXTypedef
 instance Store QXEnum
 instance Store QXVariable
@@ -660,7 +551,7 @@ parseQXOverload :: (MonadThrow m, HasCallStack) => Element -> m (Maybe Int)
 parseQXOverload el = do
   ov <- parseQXBool "overload" el
   if ov
-    then treadM <$> lookupAttrib "overload-number" el
+    then (lookupAttrib "overload-number" el >>= treadM) |> fmap pure
     else pure Nothing
 
 parseQXFunctionType :: (MonadThrow m, HasCallStack) => Element -> m QXFunctionType
@@ -726,7 +617,7 @@ parseQXClass el = do
   _access    <- el |> parseQXAccessLevel
   _tsafety   <- el |> parseQXThreadSafety
   _bases     <- el |> lookupAttrib "bases"
-  _children  <- el |> elChildren |> mapM parseQXDecl |> fmap catMaybes
+  _children  <- el |> parseQXChildren
   pure $ QXClass {..}
 
 parseQXTypedef :: (MonadThrow m, HasCallStack) => Element -> m QXTypedef
@@ -823,7 +714,7 @@ parseQXNamespace el = do
   _status    <- el |> parseQXStatus
   _access    <- el |> parseQXAccessLevel
   _tsafety   <- el |> parseQXThreadSafety
-  _children  <- el |> elChildren |> mapM parseQXDecl |> fmap catMaybes
+  _children  <- el |> parseQXChildren
   pure $ QXNamespace {..}
 
 parseQXDecl :: (MonadThrow m, HasCallStack) => Element -> m (Maybe QXDecl)
@@ -843,6 +734,9 @@ parseQXDecl el = case el |> elName |> qName of
   "contents"  -> pure Nothing
   owise       -> myError $ "unknown declaration: " <> owise
 
+parseQXChildren :: (MonadThrow m, HasCallStack) => Element -> m [QXDecl]
+parseQXChildren = elChildren .> mapM parseQXDecl .> fmap catMaybes
+
 parseQXIndex :: (MonadThrow m, HasCallStack) => [Content] -> m QXIndex
 parseQXIndex xml = do
   let el = xml |> onlyElems |> (!! 1)
@@ -855,7 +749,7 @@ parseQXIndex xml = do
   _url      <- el |> lookupAttrib "url"
   _version  <- el |> lookupAttrib "version"
   _title    <- el |> lookupAttrib "title"
-  _children <- el |> elChildren |> mapM parseQXDecl |> fmap catMaybes
+  _children <- el |> parseQXChildren
   pure $ QXIndex {..}
 
 lookupAttrib :: (MonadThrow m, HasCallStack) => Text -> Element -> m Text
@@ -887,46 +781,8 @@ lookupOptAttrib aname (el@(Element { elAttribs })) = inspected
 prettyEl :: Element -> Text
 prettyEl = pretty .> show .> T.pack
 
-isSpaceCData :: Content -> Bool
-isSpaceCData (Text (CData { cdData = xs })) = all isSpace xs
-isSpaceCData _                              = False
-
--- removeContent :: (Content -> Bool) -> [Content] -> [Content]
--- removeContent _    []      = []
--- removeContent pred content = let Just cur = fromForest content
---                              in toForest $ removeC cur
---   where
---     removeC cur = if pred $ toTree cur
---                   then case removeGoRight cur
---                        of Just cur' -> removeC cur'
---                           Nothing   -> case removeGoUp cur
---                                        of Just cur' -> removeC cur'
---                                           Nothing   -> cur
---                   else case nextDF cur
---                        of Just cur' -> removeC cur'
---                           Nothing   -> cur
-
-modifyForest :: ([Content] -> [Content]) -> Cursor -> Cursor
-modifyForest f = modifyContent helper
-  where
-    helper :: Content -> Content
-    helper (Elem e) = Elem (e { elContent = (e |> elContent |> f) })
-    helper owise    = owise
-
-removeSpaceCData :: [Content] -> [Content]
-removeSpaceCData content = toForest $ last iters
-  where
-    iters :: [Cursor]
-    iters = content
-            |> fromForest
-            |> iterate (>>= nextDF . helper)
-            |> takeWhile isJust
-            |> map fromJust
-    -- iters = map fromJust $ takeWhile isJust $ iterate (>>= nextDF . helper) $ fromForest content
-    helper = modifyForest (filter (not . isSpaceCData))
-
--- removeSpaceCData :: [Content] -> [Content]
--- removeSpaceCData = removeContent isSpaceCData
+searchIndex :: QXIndex -> Text -> [QXDecl]
+searchIndex = undefined
 
 type XTag = Text
 type XKey = Text
@@ -1016,25 +872,26 @@ contentsToXT = concatMap helper
     helper (Text cd) = [XText $ T.pack $ cdData cd]
     helper _         = []
 
-getPreparsedQX :: IO QXIndex
-getPreparsedQX = LBS.readFile "./debug.qx.gz"
-                 >>= GZip.decompress .> LBS.toStrict .> Store.decodeIO
-
-getPreparsedXML :: IO [Content]
-getPreparsedXML = do
-  Right pp <- Cereal.decode <$> BS.readFile "./debug.dat"
-  pure $ toXMLChunks pp
-
 preparseXML :: FilePath -> FilePath -> IO ()
 preparseXML input output = do
   xml <- parseXML <$> T.readFile input
-  xml |> Cereal.encode |> BS.writeFile output
+  xml |> Store.encode |> LBS.fromStrict |> GZip.compress |> LBS.writeFile output
 
 preparseQX :: FilePath -> FilePath -> IO ()
 preparseQX input output = do
   xml <- parseXML <$> T.readFile input
   qx <- parseQXIndex xml
   qx |> Store.encode |> LBS.fromStrict |> GZip.compress |> LBS.writeFile output
+
+getPreparsedXML :: IO [Content]
+getPreparsedXML = LBS.readFile "./data/debug.dat.gz"
+                  >>= GZip.decompress
+                  .> LBS.toStrict
+                  .> Store.decodeIO
+
+getPreparsedQX :: IO QXIndex
+getPreparsedQX = LBS.readFile "./data/debug.qx.gz"
+                 >>= GZip.decompress .> LBS.toStrict .> Store.decodeIO
 
 simple :: IO Element
 simple = (!! 1) . onlyElems . parseXML
