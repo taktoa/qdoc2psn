@@ -12,6 +12,8 @@
 
 module QDoc.Parser where
 
+import           QDoc.Helpers
+
 import           System.Environment           (getArgs)
 
 import           Data.ByteString              (ByteString)
@@ -36,7 +38,7 @@ import qualified Data.Map                     as Map
 import           Data.Set                     (Set)
 import qualified Data.Set                     as Set
 
-import           Data.Foldable                (toList)
+import           Data.Foldable                (asum, toList)
 
 import           Text.XML.Light
 import           Text.XML.Light.Cursor        hiding (Path)
@@ -71,43 +73,8 @@ import qualified Codec.Compression.GZip       as GZip
 import           Data.Store                   (Store)
 import qualified Data.Store                   as Store
 
-myError :: (HasCallStack) => String -> a
-myError = error
-
-choice :: (Alternative f) => [f a] -> f a
-choice = foldr (<|>) empty
-
-mapInitLast :: (a -> b) -> (a -> b) -> [a] -> [b]
-mapInitLast _ _ []     = []
-mapInitLast _ g [x]    = [g x]
-mapInitLast f g (x:xs) = f x : mapInitLast f g xs
-
-splitOnCommas :: Text -> [Text]
-splitOnCommas = T.split (== ',')
-
-treadM :: (MonadThrow m, Read r, HasCallStack) => Text -> m r
-treadM txt = case (txt |> T.unpack |> readMay)
-             of Just r  -> pure r
-                Nothing -> ["failed to read: ", txt]
-                           |> mconcat |> T.unpack |> myError
-
-tshow :: (Show s) => s -> Text
-tshow = show .> T.pack
-
 text :: Text -> Doc
 text = PP.text . T.unpack
-
-(|>) :: a -> (a -> b) -> b
-(|>) = flip ($)
-infixl 0 |>
-
-(.>) :: (a -> b) -> (b -> c) -> a -> c
-(.>) = flip (.)
-infixl 9 .>
-
-(<#>) :: (Functor f) => f a -> (a -> b) -> f b
-(<#>) = flip (<$>)
-infixr 4 <#>
 
 deriving instance Generic Attr
 deriving instance Generic CData
@@ -188,11 +155,11 @@ data CxxStubType
 
 data QXPosition
   = QXPosition
-  { _lineno   :: Maybe Int
-  , _filepath :: Maybe ByteString
-  , _location :: Maybe Text
-  , _href     :: Maybe Text
-  } deriving (Eq, Show, Generic)
+    { _lineno   :: Maybe Int
+    , _filepath :: Maybe ByteString
+    , _location :: Maybe Text
+    , _href     :: Maybe Text
+    } deriving (Eq, Show, Generic)
 
 data QXDecl
   = QXDeclNamespace QXNamespace
@@ -209,209 +176,209 @@ data QXDecl
 data QXTypedef
   = QXTypedef
 
-  -- Metadata
+    -- Metadata
 
-  { _name     :: Text
-  , _fullname :: Maybe Text
+    { _name     :: Text
+    , _fullname :: Maybe Text
 
-  , _position :: QXPosition
+    , _position :: QXPosition
 
-  , _status   :: QXStatus
-  , _since    :: Maybe QXVersion
+    , _status   :: QXStatus
+    , _since    :: Maybe QXVersion
 
-  -- C++-related
+    -- C++-related
 
-  , _access   :: QXAccessLevel
-  , _tsafety  :: QXThreadSafety
-  , _enum     :: Text
-  } deriving (Eq, Show, Generic)
+    , _access   :: QXAccessLevel
+    , _tsafety  :: QXThreadSafety
+    , _enum     :: Text
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
 data QXEnum
   = QXEnum
 
-  -- Metadata
+    -- Metadata
 
-  { _name     :: Text
-  , _fullname :: Maybe Text
+    { _name     :: Text
+    , _fullname :: Maybe Text
 
-  , _position :: QXPosition
+    , _position :: QXPosition
 
-  , _status   :: QXStatus
-  , _since    :: Maybe QXVersion
+    , _status   :: QXStatus
+    , _since    :: Maybe QXVersion
 
-  -- C++-related
+    -- C++-related
 
-  , _access   :: QXAccessLevel
-  , _tsafety  :: QXThreadSafety
-  , _typedef  :: Text
-  , _values   :: Map Text CxxConstExpr
-  } deriving (Eq, Show, Generic)
+    , _access   :: QXAccessLevel
+    , _tsafety  :: QXThreadSafety
+    , _typedef  :: Text
+    , _values   :: Map Text CxxConstExpr
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
 data QXVariable
   = QXVariable
 
-  -- Metadata
+    -- Metadata
 
-  { _name     :: Text
-  , _fullname :: Maybe Text
+    { _name     :: Text
+    , _fullname :: Maybe Text
 
-  , _position :: QXPosition
+    , _position :: QXPosition
 
-  , _brief    :: Text
-  , _status   :: QXStatus
+    , _brief    :: Text
+    , _status   :: QXStatus
 
-  -- C++-related
+    -- C++-related
 
-  , _access   :: QXAccessLevel
-  , _tsafety  :: QXThreadSafety
-  , _static   :: Bool
-  , _type     :: CxxType
-  } deriving (Eq, Show, Generic)
+    , _access   :: QXAccessLevel
+    , _tsafety  :: QXThreadSafety
+    , _static   :: Bool
+    , _type     :: CxxType
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
 data QXProperty
   = QXProperty
 
-    -- Metadata
+      -- Metadata
 
-  { _name      :: Text
-  , _fullname  :: Maybe Text
+    { _name      :: Text
+    , _fullname  :: Maybe Text
 
-  , _position  :: QXPosition
+    , _position  :: QXPosition
 
-  , _brief     :: Text
-  , _status    :: QXStatus
-  , _since     :: Maybe QXVersion
+    , _brief     :: Text
+    , _status    :: QXStatus
+    , _since     :: Maybe QXVersion
 
-    -- Qt-related
+      -- Qt-related
 
-  , _getters   :: [Text]
-  , _setters   :: [Text]
-  , _resetters :: [Text]
-  , _notifiers :: [Text]
+    , _getters   :: [Text]
+    , _setters   :: [Text]
+    , _resetters :: [Text]
+    , _notifiers :: [Text]
 
-    -- C++-related
+      -- C++-related
 
-  , _access    :: QXAccessLevel
-  , _tsafety   :: QXThreadSafety
-  , _type      :: CxxType
-  } deriving (Eq, Show, Generic)
+    , _access    :: QXAccessLevel
+    , _tsafety   :: QXThreadSafety
+    , _type      :: CxxType
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
 data QXParameter
   = QXParameter
-  { _name    :: Text
-  , _type    :: CxxType
-  , _default :: CxxConstExpr
-  } deriving (Eq, Show, Generic)
+    { _name    :: Text
+    , _type    :: CxxType
+    , _default :: CxxConstExpr
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
 data QXFunction
   = QXFunction
 
-  -- Metadata
+    -- Metadata
 
-  { _name      :: Text
-  , _fullname  :: Maybe Text
+    { _name      :: Text
+    , _fullname  :: Maybe Text
 
-  , _position  :: QXPosition
+    , _position  :: QXPosition
 
-  , _brief     :: Text
-  , _status    :: QXStatus
-  , _since     :: Maybe QXVersion
+    , _brief     :: Text
+    , _status    :: QXStatus
+    , _since     :: Maybe QXVersion
 
-  -- Qt-related
+    -- Qt-related
 
-  , _assocProp :: Text
+    , _assocProp :: Text
 
-  -- C++-related
+    -- C++-related
 
-  , _access    :: QXAccessLevel
-  , _tsafety   :: QXThreadSafety
+    , _access    :: QXAccessLevel
+    , _tsafety   :: QXThreadSafety
 
-  , _signature :: CxxType
-  , _type      :: CxxType
+    , _signature :: CxxType
+    , _type      :: CxxType
 
-  , _virtual   :: QXVirtual
-  , _const     :: Bool
-  , _final     :: Bool
-  , _static    :: Bool
-  , _stubType  :: CxxStubType
-  , _overload  :: Maybe Int
-  , _meta      :: QXFunctionType
+    , _virtual   :: QXVirtual
+    , _const     :: Bool
+    , _final     :: Bool
+    , _static    :: Bool
+    , _stubType  :: CxxStubType
+    , _overload  :: Maybe Int
+    , _meta      :: QXFunctionType
 
-  , _params    :: [QXParameter]
-  } deriving (Eq, Show, Generic)
+    , _params    :: [QXParameter]
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
 data QXClass
   = QXClass
 
-  -- Metadata
+    -- Metadata
 
-  { _name     :: Text
-  , _fullname :: Maybe Text
+    { _name     :: Text
+    , _fullname :: Maybe Text
 
-  , _position :: QXPosition
+    , _position :: QXPosition
 
-  , _module   :: Maybe Text
-  , _groups   :: [Text]
+    , _module   :: Maybe Text
+    , _groups   :: [Text]
 
-  , _brief    :: Text
-  , _status   :: QXStatus
-  , _since    :: Maybe QXVersion
+    , _brief    :: Text
+    , _status   :: QXStatus
+    , _since    :: Maybe QXVersion
 
-  -- C++-related
+    -- C++-related
 
-  , _access   :: QXAccessLevel
-  , _tsafety  :: QXThreadSafety
+    , _access   :: QXAccessLevel
+    , _tsafety  :: QXThreadSafety
 
-  , _bases    :: Text
-  , _children :: [QXDecl]
-  } deriving (Eq, Show, Generic)
+    , _bases    :: Text
+    , _children :: [QXDecl]
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
 data QXNamespace
   = QXNamespace
 
-  -- Metadata
+    -- Metadata
 
-  { _name     :: Text
-  , _fullname :: Maybe Text
+    { _name     :: Text
+    , _fullname :: Maybe Text
 
-  , _position :: QXPosition
+    , _position :: QXPosition
 
-  , _module   :: Maybe Text
+    , _module   :: Maybe Text
 
-  , _brief    :: Text
-  , _status   :: QXStatus
+    , _brief    :: Text
+    , _status   :: QXStatus
 
-  -- C++-related
+    -- C++-related
 
-  , _access   :: QXAccessLevel
-  , _tsafety  :: QXThreadSafety
-  , _children :: [QXDecl]
-  } deriving (Eq, Show, Generic)
+    , _access   :: QXAccessLevel
+    , _tsafety  :: QXThreadSafety
+    , _children :: [QXDecl]
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
 data QXIndex
   = QXIndex
-  { _project  :: Text
-  , _url      :: Text
-  , _version  :: Text
-  , _title    :: Text
-  , _children :: [QXDecl]
-  } deriving (Eq, Show, Generic)
+    { _project  :: Text
+    , _url      :: Text
+    , _version  :: Text
+    , _title    :: Text
+    , _children :: [QXDecl]
+    } deriving (Eq, Show, Generic)
 
 --------------------------------------------------------------------------------
 
@@ -545,7 +512,7 @@ parseQXStubType el = case success
               , (do True <- parseQXBool "default" el
                     pure CST_Default)
               , pure CST_Normal
-              ] |> choice
+              ] |> asum
 
 parseQXOverload :: (MonadThrow m, HasCallStack) => Element -> m (Maybe Int)
 parseQXOverload el = do
@@ -592,17 +559,28 @@ parseQXPropertyChildren expected = elChildren
       el |> lookupAttrib "name"
 
 parseQXParameters :: (MonadThrow m, HasCallStack) => Element -> m [QXParameter]
-parseQXParameters el = pure mempty -- FIXME
+parseQXParameters = elChildren .> mapMaybe parseQXParameter .> pure
   where
-    parseQXParameter :: Element -> QXParameter
-    parseQXParameter = undefined
+    parseQXParameter :: Element -> Maybe QXParameter
+    parseQXParameter el = do
+      let ename = el |> elName |> qName |> T.pack
+      guard $ ename == "parameter"
+      _name    <- el |> lookupAttrib "name"
+      _type    <- el |> lookupAttrib "left"    |> fmap CxxType
+      _default <- el |> lookupAttrib "default" |> fmap CxxConstExpr
+      pure $ QXParameter {..}
 
 parseQXValues :: (MonadThrow m, HasCallStack)
               => Element -> m (Map Text CxxConstExpr)
-parseQXValues el = pure mempty -- FIXME
+parseQXValues = elChildren .> mapMaybe parseQXValue .> Map.fromList .> pure
   where
-    parseQXValue :: Element -> (Text, CxxConstExpr)
-    parseQXValue = undefined
+    parseQXValue :: Element -> Maybe (Text, CxxConstExpr)
+    parseQXValue el = do
+      let ename = el |> elName |> qName |> T.pack
+      guard $ ename == "value"
+      name  <- el |> lookupAttrib "name"
+      value <- el |> lookupAttrib "value"
+      pure (name, CxxConstExpr value)
 
 parseQXClass :: (MonadThrow m, HasCallStack) => Element -> m QXClass
 parseQXClass el = do
@@ -872,6 +850,13 @@ contentsToXT = concatMap helper
     helper (Text cd) = [XText $ T.pack $ cdData cd]
     helper _         = []
 
+recurseXML :: (Element -> Bool) -> Element -> [Element]
+recurseXML predicate = helper
+  where
+    helper :: Element -> [Element]
+    helper el = concatMap helper (elChildren el)
+                |> (if predicate el then (el :) else id)
+
 preparseXML :: FilePath -> FilePath -> IO ()
 preparseXML input output = do
   xml <- parseXML <$> T.readFile input
@@ -895,10 +880,10 @@ getPreparsedQX = LBS.readFile "./data/debug.qx.gz"
 
 simple :: IO Element
 simple = (!! 1) . onlyElems . parseXML
-         <$> T.readFile "./simple.xml"
+         <$> T.readFile "./data/simple.xml"
 
-debug :: IO ()
-debug = T.readFile "./simple.xml" >>= parseXML .> parseQXIndex >>= print
+debug :: IO QXIndex
+debug = T.readFile "./data/simple.xml" >>= parseXML .> parseQXIndex
 -- printSimple :: IO ()
 -- printSimple = simple >>= pretty .> putDoc
 
