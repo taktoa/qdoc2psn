@@ -2,7 +2,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns        #-}
-{-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE QuasiQuotes           #-}
@@ -132,6 +131,9 @@ data QXFunctionType
   | QXFT_Destructor
   | QXFT_CopyAssign
   | QXFT_CopyConstructor
+  | QXFT_MoveAssign
+  | QXFT_MoveConstructor
+  | QXFT_Macro
   | QXFT_MacroWithoutParams
   | QXFT_MacroWithParams
   | QXFT_Signal
@@ -528,6 +530,9 @@ parseQXFunctionType el = do
              "destructor"         -> pure QXFT_Destructor
              "copy-assign"        -> pure QXFT_CopyAssign
              "copy-constructor"   -> pure QXFT_CopyConstructor
+             "move-assign"        -> pure QXFT_MoveAssign
+             "move-constructor"   -> pure QXFT_MoveConstructor
+             "macro"              -> pure QXFT_Macro
              "macrowithoutparams" -> pure QXFT_MacroWithoutParams
              "macrowithparams"    -> pure QXFT_MacroWithParams
              "signal"             -> pure QXFT_Signal
@@ -535,7 +540,6 @@ parseQXFunctionType el = do
              "plain"              -> pure QXFT_Plain
              owise                -> ["unknown function type: ", owise]
                                      |> mconcat |> T.unpack |> myError
-
 
 parseQXVirtual :: (MonadThrow m, HasCallStack) => Element -> m QXVirtual
 parseQXVirtual el = do
